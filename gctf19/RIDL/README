@@ -1,0 +1,8 @@
+Google CTF 2019 RIDL solution.
+An implementation of the original paper: https://cs.vu.nl/~herbertb/download/ridlers/files/ridl.pdf
+Loosely based on:
+* https://github.com/pietroborrello/RIDL-and-ZombieLoad
+* https://github.com/gkaindl/meltdown-poc
+
+
+Run make, then run ./solve.py.
