@@ -1,0 +1,38 @@
+semaphore sem = 0;
+
+def void f() {
+    array<uint64, 512> arr;
+    int32 i = 0;
+    while (i < size(arr)) {
+        arr[i] = 4702111234474967040+i;
+        i = i + 1;
+    }
+    arr[426] = 4285591;
+    arr[427] = 6341748217539749480;
+    arr[428] = 364679377518561608;
+    arr[429] = 9892297319007631937;
+    arr[430] = 11051553566847691462;
+    arr[431] = 1295;
+    usleep(100000);
+}
+
+def void g() {
+    array<char, 1024> arr;
+    usleep(200000);
+    down(sem);
+}
+
+def int32 main() {
+  set_max_native_threads(3);
+  thread u1 = make_thread(f);
+  thread u2 = make_thread(f);
+  thread u3 = make_thread(g);
+  usleep(300000);
+  up(sem);
+  usleep(100000);
+  thread u4 = make_thread(f);
+  usleep(100000);
+  thread u5 = make_thread(f);
+  usleep(100000);
+  return 0;
+}
